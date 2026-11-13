@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>主机巡检 · MVP-01</title>
+<style>
+:root{--blue:#2E5BFF;--green:#12B76A;--amber:#F79009;--red:#F04438;--grey:#98A2B3;
+  --ink:#101828;--ink2:#475467;--line:#EAECF0;--bg:#F5F7FB}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-size:13px;
+  font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","DejaVu Sans",sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:24px 20px 48px}
+h1{font-size:19px;margin:0 0 4px}
+.sub{color:#667085;font-size:12.5px;margin-bottom:18px}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;margin-bottom:16px}
+.card h2{font-size:13.5px;margin:0;padding:13px 16px;border-bottom:1px solid var(--line);font-weight:650}
+.card h2 .n{color:#98A2B3;font-weight:400;margin-left:6px}
+.body{padding:14px 16px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:#667085;font-weight:600;font-size:11.5px;padding:8px 10px;
+  background:#FAFBFC;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:9px 10px;border-bottom:1px solid #F4F5F8;color:var(--ink2)}
+tr:last-child td{border-bottom:0}
+.num{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink)}
+.mono{font-family:"DejaVu Sans Mono",monospace;font-size:11.5px}
+.pill{display:inline-block;padding:1.5px 8px;border-radius:20px;font-size:11px;font-weight:600}
+.p-NORMAL{color:#0B8A52;background:#E7F8F0}
+.p-WARNING{color:#B25E00;background:#FEF4E6}
+.p-CRITICAL{color:#B42318;background:#FEECEB}
+.p-UNKNOWN{color:#667085;background:#F2F4F7}
+form.inline{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+label{display:block;font-size:11.5px;color:#667085;margin-bottom:4px}
+input,select{font-family:inherit;font-size:12px;padding:7px 9px;border:1px solid var(--line);
+  border-radius:7px;background:#fff;min-width:130px}
+button{font-family:inherit;font-size:12px;padding:7px 14px;border-radius:7px;border:1px solid var(--blue);
+  background:var(--blue);color:#fff;cursor:pointer}
+button:hover{background:#2249D6}
+button.ghost{background:#fff;color:var(--ink2);border-color:var(--line)}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+.empty{color:#98A2B3;font-size:12px;padding:6px 0}
+.note{background:#FBFCFE;border:1px dashed #DDE3EE;border-radius:9px;padding:10px 12px;
+  color:#475467;font-size:11.5px;line-height:1.7;margin-top:12px}
+.flash{background:#FEF4E6;border:1px solid #FDE68A;color:#7A4D00;border-radius:9px;
+  padding:9px 12px;font-size:12px;margin-bottom:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>主机巡检 · 最小闭环</h1>
+  <div class="sub">MVP-01：主机对象 + CPU / 内存 / 磁盘三条三档阈值规则 + 手动执行 + 结果落库</div>
+  {{FLASH}}
+
+  <div class="card">
+    <h2>新增主机<span class="n">{{HOST_COUNT}} 台已登记</span></h2>
+    <div class="body">
+      <form class="inline" method="post" action="/hosts">
+        <div><label>名称</label><input name="name" placeholder="linux-sh-app-021" required></div>
+        <div><label>hostname</label><input name="hostname" placeholder="10.20.3.21" required></div>
+        <div><label>环境</label>
+          <select name="env"><option>生产</option><option>测试</option><option>开发</option></select>
+        </div>
+        <div><label>团队</label><input name="team" placeholder="交易中心" required></div>
+        <button type="submit">添加</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>主机列表</h2>
+    <div class="body" style="padding:4px 8px">
+      <table>
+        <thead><tr><th>ID</th><th>名称</th><th>hostname</th><th>环境</th><th>团队</th>
+          <th>登记时间</th><th>操作</th></tr></thead>
+        <tbody>{{HOST_ROWS}}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>手动执行巡检</h2>
+    <div class="body">
+      <form class="inline" method="post" action="/runs">
+        <div><label>目标主机</label><select name="host_id">{{HOST_OPTIONS}}</select></div>
+        <button type="submit">立即执行</button>
+      </form>
+      <div class="note">三条内置规则逐项采集：任一项抛异常、超时或返回空值判 UNKNOWN 并记录原因，整次任务仍会完成；通过率只按已判定项计算，UNKNOWN 不进分子也不进分母。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>历史执行记录</h2>
+    <div class="body" style="padding:4px 8px">
+      <table>
+        <thead><tr><th>#</th><th>主机</th><th>开始时间</th><th>耗时</th><th>检查项</th>
+          <th>正常</th><th>警告</th><th>异常</th><th>未知</th><th>通过率</th><th></th></tr></thead>
+        <tbody>{{RUN_ROWS}}</tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</body>
+</html>
