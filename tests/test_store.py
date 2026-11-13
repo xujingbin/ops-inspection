@@ -39,6 +39,47 @@ class HostStoreTest(unittest.TestCase):
         self.assertIsNone(self.st.get_host(9999))
 
 
+class RuleStoreTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.st = store.Store(os.path.join(self.tmp.name, "test.db"))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_seeded_builtin_rules(self):
+        rules = self.st.list_rules()
+        self.assertEqual([r["code"] for r in rules], ["R-INFRA-001", "R-INFRA-002", "R-INFRA-003"])
+        cpu = self.st.get_rule("R-INFRA-001")
+        self.assertEqual((cpu["normal_below"], cpu["critical_from"]), (75.0, 90.0))
+        self.assertTrue(cpu["enabled"])
+
+    def test_update_thresholds(self):
+        updated = self.st.update_rule("R-INFRA-001", 60, 85)
+        self.assertEqual((updated["normal_below"], updated["critical_from"]), (60.0, 85.0))
+        self.assertEqual(self.st.get_rule("R-INFRA-001")["normal_below"], 60.0)
+
+    def test_disable_rule(self):
+        self.st.update_rule("R-INFRA-003", 80, 90, enabled=False)
+        codes = [r["code"] for r in self.st.list_rules(enabled_only=True)]
+        self.assertNotIn("R-INFRA-003", codes)
+        self.assertEqual(len(codes), 2)
+
+    def test_invalid_thresholds(self):
+        with self.assertRaises(ValueError):
+            self.st.update_rule("R-INFRA-001", 90, 80)   # 正常上限 >= 异常下界
+        with self.assertRaises(ValueError):
+            self.st.update_rule("R-INFRA-001", 75, 120)  # 超出 0~100
+        with self.assertRaises(ValueError):
+            self.st.update_rule("R-INFRA-001", "abc", 90)
+        with self.assertRaises(ValueError):
+            self.st.update_rule("R-NOT-EXIST", 50, 80)
+
+    def test_seed_is_idempotent(self):
+        again = store.Store(self.st.path)
+        self.assertEqual(len(again.list_rules()), 3)
+
+
 class RunStoreTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

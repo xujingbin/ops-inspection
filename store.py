@@ -1,4 +1,4 @@
-"""SQLite 存储：主机对象、执行记录、逐项结果。"""
+"""SQLite 存储：主机对象、规则阈值、执行记录、逐项结果。"""
 
 from __future__ import annotations
 
@@ -16,6 +16,17 @@ CREATE TABLE IF NOT EXISTS hosts (
     env         TEXT NOT NULL,
     team        TEXT NOT NULL,
     created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rules (
+    code          TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    metric        TEXT NOT NULL,
+    normal_below  REAL NOT NULL,
+    critical_from REAL NOT NULL,
+    unit          TEXT NOT NULL DEFAULT '%',
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    updated_at    TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS runs (
@@ -56,6 +67,10 @@ def _fmt(ts: float) -> str:
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _now() -> str:
+    return _fmt(datetime.now().timestamp())
+
+
 class Store:
     def __init__(self, path: str = "inspection.db") -> None:
         self.path = path
@@ -70,6 +85,15 @@ class Store:
     def _init_db(self) -> None:
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            conn.executemany(
+                """INSERT OR IGNORE INTO rules
+                   (code, name, metric, normal_below, critical_from, unit, enabled, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 1, ?)""",
+                [
+                    (r.code, r.name, r.metric, r.normal_below, r.critical_from, r.unit, _now())
+                    for r in core.BUILTIN_RULES
+                ],
+            )
 
     # ---------------- 主机对象 ----------------
 
@@ -96,6 +120,51 @@ class Store:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM hosts WHERE id = ?", (host_id,)).fetchone()
         return dict(row) if row else None
+
+    # ---------------- 规则阈值 ----------------
+
+    def list_rules(self, enabled_only: bool = False) -> List[Dict]:
+        sql = "SELECT * FROM rules"
+        if enabled_only:
+            sql += " WHERE enabled = 1"
+        sql += " ORDER BY code"
+        with self._connect() as conn:
+            rows = conn.execute(sql).fetchall()
+        rules = []
+        for row in rows:
+            item = dict(row)
+            item["enabled"] = bool(item["enabled"])
+            rules.append(item)
+        return rules
+
+    def get_rule(self, code: str) -> Optional[Dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM rules WHERE code = ?", (code,)).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["enabled"] = bool(item["enabled"])
+        return item
+
+    def update_rule(self, code: str, normal_below, critical_from, enabled: bool = True) -> Dict:
+        """更新阈值。区间约束：0 <= normal_below < critical_from <= 100。"""
+        rule = self.get_rule(code)
+        if not rule:
+            raise ValueError(f"规则不存在: {code}")
+        try:
+            normal = float(normal_below)
+            critical = float(critical_from)
+        except (TypeError, ValueError):
+            raise ValueError("阈值必须是数字")
+        if not (0 <= normal < critical <= 100):
+            raise ValueError("阈值不合法：需满足 0 <= 正常上限 < 异常下界 <= 100")
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE rules SET normal_below = ?, critical_from = ?, enabled = ?, updated_at = ? "
+                "WHERE code = ?",
+                (normal, critical, 1 if enabled else 0, _now(), code),
+            )
+        return self.get_rule(code)
 
     # ---------------- 执行记录 ----------------
 

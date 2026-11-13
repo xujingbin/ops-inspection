@@ -115,6 +115,48 @@ class HttpTest(unittest.TestCase):
         self.assertEqual(payload["status"], "ok")
         self.assertGreaterEqual(payload["hosts"], 0)
 
+    def test_rules_page(self):
+        status, body, _ = self.get("/rules")
+        self.assertEqual(status, 200)
+        self.assertIn("巡检规则 · 阈值配置", body)
+        for code in ("R-INFRA-001", "R-INFRA-002", "R-INFRA-003"):
+            self.assertIn(code, body)
+
+    def test_update_rule_from_page(self):
+        status, _, headers = self.post(
+            "/rules",
+            {"code": "R-INFRA-002", "normal_below": "70", "critical_from": "88", "enabled": "1"},
+        )
+        self.assertEqual(status, 303)
+        self.assertEqual(headers.get("Location"), "/rules")
+        rule = self.store.get_rule("R-INFRA-002")
+        self.assertEqual((rule["normal_below"], rule["critical_from"]), (70.0, 88.0))
+        # 执行时使用库里的阈值
+        mapped = {r.code: r for r in app.rules_from_store(self.store)}
+        self.assertEqual(mapped["R-INFRA-002"].normal_below, 70.0)
+        self.assertEqual(mapped["R-INFRA-002"].critical_from, 88.0)
+
+    def test_update_rule_invalid(self):
+        status, body, _ = self.post(
+            "/rules",
+            {"code": "R-INFRA-002", "normal_below": "90", "critical_from": "80", "enabled": "1"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("阈值不合法", body)
+
+    def test_run_rejected_when_all_rules_disabled(self):
+        rules = self.store.list_rules()
+        try:
+            for r in rules:
+                self.store.update_rule(r["code"], r["normal_below"], r["critical_from"], enabled=False)
+            host_id = self.add_host("linux-test-norules-01")
+            status, body, _ = self.post("/runs", {"host_id": str(host_id)})
+            self.assertEqual(status, 400)
+            self.assertIn("没有启用的规则", body)
+        finally:
+            for r in rules:
+                self.store.update_rule(r["code"], r["normal_below"], r["critical_from"], enabled=True)
+
     def test_missing_run_detail(self):
         status, body, _ = self.get("/runs/999999")
         self.assertEqual(status, 404)

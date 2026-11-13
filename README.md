@@ -19,6 +19,7 @@ python3 app.py --port 8000
 |---|---|
 | 主机对象 | 新增 / 列表：名称、hostname、环境、团队 |
 | 内置规则 | CPU 使用率、内存使用率、磁盘使用率，各三档阈值 |
+| 规则阈值配置 | `/rules` 页面在线改正常上限/异常下界与启停，存在 `rules` 表，改完立即生效 |
 | 手动执行 | 逐项采集 → 判定 → 落库，单项失败只影响该项 |
 | 结果页 | 检查项数、正常/警告/异常/未知数量、通过率、逐项实际值与阈值、说明 |
 | 历史记录 | 最近 20 次执行，可回看每次逐项结果 |
@@ -32,6 +33,8 @@ python3 app.py --port 8000
 | 磁盘使用率 `R-INFRA-003` | < 80% | 80% ~ 90% | ≥ 90% |
 
 边界语义有单测覆盖：`74.9 → NORMAL`、`75 → WARNING`、`89.9 → WARNING`、`90 → CRITICAL`。
+
+阈值默认值随建库写入 `rules` 表（`INSERT OR IGNORE`，可重复执行），之后以表里的值为准，可在 `/rules` 页面直接修改；约束 `0 <= 正常上限 < 异常下界 <= 100`，非法值返回 400 并提示原因。
 
 ## 结果状态语义
 
@@ -59,17 +62,19 @@ python3 -m unittest discover -s tests -v
 覆盖三块：
 
 - `tests/test_core.py`：三档阈值边界、采集异常/空值/非数值/缺采集器 → UNKNOWN、UNKNOWN 不计入通过率、真实采集器取值区间。
+- 规则配置：建库种子幂等、阈值更新与启停、非法阈值（正常上限 ≥ 异常下界、超出 0~100、非数字、规则不存在）→ 400、执行时使用库里的阈值、全部停用时拒绝执行。
 - `tests/test_store.py`：主机增查与必填校验、执行记录与逐项结果的 SQLite 往返、按时间倒序、按主机过滤、全 UNKNOWN 时通过率落 NULL。
 - `tests/test_app.py`：真实起 HTTP 服务，覆盖首页、新增主机（含 400 校验）、执行巡检跳转与详情页内容、`/health`、404。
 
 ## 目录
 
 ```
-app.py                 HTTP 路由与页面渲染
+app.py                 HTTP 路由与页面渲染（/、/hosts、/rules、/runs、/runs/{id}、/health）
 core.py                规则、三档阈值判定、采集器、单次执行
-store.py               SQLite 表结构与读写
+store.py               SQLite 表结构（hosts / rules / runs / run_items）与读写
 templates/index.html   首页（主机 / 执行 / 历史）
 templates/detail.html  执行结果页
+templates/rules.html   规则阈值配置页
 tests/                 单元测试与 HTTP 测试
 ```
 

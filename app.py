@@ -35,6 +35,50 @@ def _esc(value) -> str:
     return html.escape("" if value is None else str(value))
 
 
+def rules_from_store(st: store.Store) -> list:
+    """把 rules 表里的启用规则转换成巡检核心的 Rule 对象。"""
+    return [
+        core.Rule(
+            r["code"], r["name"], r["metric"], r["normal_below"], r["critical_from"], r["unit"]
+        )
+        for r in st.list_rules(enabled_only=True)
+    ]
+
+
+def render_rules(st: store.Store, flash: str = "", error: bool = False) -> str:
+    rules = st.list_rules()
+    rows = []
+    for r in rules:
+        form_id = f"f-{r['code']}"
+        checked = "checked" if r["enabled"] else ""
+        rows.append(
+            "<tr><td class='mono'>{code}</td><td>{name}</td><td class='mono'>{metric}</td>"
+            "<td><input form='{fid}' type='number' name='normal_below' step='0.1' min='0' max='100' value='{normal:g}'></td>"
+            "<td><input form='{fid}' type='number' name='critical_from' step='0.1' min='0' max='100' value='{critical:g}'></td>"
+            "<td>正常 &lt;{normal:g}% / 警告 {normal:g}~{critical:g}% / 异常 &ge;{critical:g}%</td>"
+            "<td><input form='{fid}' type='checkbox' name='enabled' value='1' {checked}> 启用</td>"
+            "<td><form id='{fid}' method='post' action='/rules'>"
+            "<input type='hidden' name='code' value='{code}'><button type='submit'>保存</button></form></td></tr>".format(
+                code=_esc(r["code"]),
+                name=_esc(r["name"]),
+                metric=_esc(r["metric"]),
+                fid=form_id,
+                normal=r["normal_below"],
+                critical=r["critical_from"],
+                checked=checked,
+            )
+        )
+    page = _template("rules.html")
+    flash_html = (
+        f'<div class="flash{" err" if error else ""}">{_esc(flash)}</div>' if flash else ""
+    )
+    return (
+        page.replace("{{FLASH}}", flash_html)
+        .replace("{{RULE_COUNT}}", str(len(rules)))
+        .replace("{{RULE_ROWS}}", "".join(rows) or "<tr><td colspan='8' class='empty'>没有规则。</td></tr>")
+    )
+
+
 def render_index(st: store.Store, flash: str = "") -> str:
     hosts = st.list_hosts()
     runs = st.list_runs(limit=20)
@@ -155,6 +199,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/":
             self._send(200, render_index(self.store))
             return
+        if path == "/rules":
+            self._send(200, render_rules(self.store))
+            return
         if path == "/health":
             body = json.dumps(
                 {"status": "ok", "hosts": self.store.count_hosts()}, ensure_ascii=False
@@ -167,7 +214,11 @@ class Handler(BaseHTTPRequestHandler):
             if not host:
                 self._redirect("/")
                 return
-            run = core.execute_run(host["id"], host["name"])
+            rules = rules_from_store(self.store)
+            if not rules:
+                self._send(400, render_index(self.store, flash="没有启用的规则，请先在规则配置页启用"))
+                return
+            run = core.execute_run(host["id"], host["name"], rules=rules)
             run_id = self.store.save_run(run)
             self._redirect(f"/runs/{run_id}")
             return
@@ -187,6 +238,21 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
+
+        if path == "/rules":
+            form = self._read_form()
+            try:
+                self.store.update_rule(
+                    form.get("code", ""),
+                    form.get("normal_below", ""),
+                    form.get("critical_from", ""),
+                    form.get("enabled") == "1",
+                )
+            except ValueError as exc:
+                self._send(400, render_rules(self.store, flash=str(exc), error=True))
+                return
+            self._redirect("/rules")
+            return
 
         if path == "/hosts":
             form = self._read_form()
@@ -213,7 +279,11 @@ class Handler(BaseHTTPRequestHandler):
             if not host:
                 self._send(404, "<h1>404</h1><p>主机不存在。</p>")
                 return
-            run = core.execute_run(host["id"], host["name"])
+            rules = rules_from_store(self.store)
+            if not rules:
+                self._send(400, render_index(self.store, flash="没有启用的规则，请先在规则配置页启用"))
+                return
+            run = core.execute_run(host["id"], host["name"], rules=rules)
             run_id = self.store.save_run(run)
             self._redirect(f"/runs/{run_id}")
             return
