@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>执行结果 #{{RUN_ID}} · 主机巡检</title>
+<style>
+:root{--blue:#2E5BFF;--green:#12B76A;--amber:#F79009;--red:#F04438;--grey:#98A2B3;
+  --ink:#101828;--ink2:#475467;--line:#EAECF0;--bg:#F5F7FB}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-size:13px;
+  font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","DejaVu Sans",sans-serif}
+.wrap{max-width:1000px;margin:0 auto;padding:24px 20px 48px}
+h1{font-size:18px;margin:0 0 4px}
+.sub{color:#667085;font-size:12.5px;margin-bottom:18px}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;margin-bottom:16px}
+.card h2{font-size:13.5px;margin:0;padding:13px 16px;border-bottom:1px solid var(--line)}
+.body{padding:14px 16px}
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+.kpi{border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.kpi .k{font-size:11.5px;color:#667085}
+.kpi .v{font-size:24px;font-weight:660;margin-top:4px;font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:#667085;font-weight:600;font-size:11.5px;padding:8px 10px;
+  background:#FAFBFC;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:9px 10px;border-bottom:1px solid #F4F5F8;color:var(--ink2);vertical-align:top}
+tr:last-child td{border-bottom:0}
+.num{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink)}
+.mono{font-family:"DejaVu Sans Mono",monospace;font-size:11.5px}
+.pill{display:inline-block;padding:1.5px 8px;border-radius:20px;font-size:11px;font-weight:600}
+.p-NORMAL{color:#0B8A52;background:#E7F8F0}
+.p-WARNING{color:#B25E00;background:#FEF4E6}
+.p-CRITICAL{color:#B42318;background:#FEECEB}
+.p-UNKNOWN{color:#667085;background:#F2F4F7}
+.reason{color:#B42318;font-size:11.5px}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+.note{background:#FBFCFE;border:1px dashed #DDE3EE;border-radius:9px;padding:10px 12px;
+  color:#475467;font-size:11.5px;line-height:1.7;margin-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>巡检结果 #{{RUN_ID}} · {{HOST_NAME}}</h1>
+  <div class="sub">开始 {{STARTED}} · 耗时 {{DURATION}} · 状态 {{STATUS_TEXT}} · <a href="/">返回列表</a></div>
+
+  <div class="card">
+    <div class="body">
+      <div class="kpis">
+        <div class="kpi"><div class="k">检查项</div><div class="v">{{TOTAL}}</div></div>
+        <div class="kpi"><div class="k">正常</div><div class="v" style="color:#0B8A52">{{NORMAL}}</div></div>
+        <div class="kpi"><div class="k">警告</div><div class="v" style="color:#B25E00">{{WARNING}}</div></div>
+        <div class="kpi"><div class="k">异常</div><div class="v" style="color:#B42318">{{CRITICAL}}</div></div>
+        <div class="kpi"><div class="k">未知</div><div class="v" style="color:#667085">{{UNKNOWN}}</div></div>
+      </div>
+      <div class="note">通过率 <b>{{PASS_RATE}}</b>：仅按已判定项（正常 + 警告 + 异常）计算，UNKNOWN 不计入分子也不计入分母。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>逐项结果</h2>
+    <div class="body" style="padding:4px 8px">
+      <table>
+        <thead><tr><th>规则</th><th>检查项</th><th>实际值</th><th>阈值</th><th>判定</th><th>耗时</th><th>说明</th></tr></thead>
+        <tbody>{{ITEM_ROWS}}</tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</body>
+</html>
