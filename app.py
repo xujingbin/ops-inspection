@@ -13,6 +13,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import core
+import scheduler
 import store
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -37,12 +38,75 @@ def _esc(value) -> str:
 
 def rules_from_store(st: store.Store) -> list:
     """把 rules 表里的启用规则转换成巡检核心的 Rule 对象。"""
-    return [
-        core.Rule(
-            r["code"], r["name"], r["metric"], r["normal_below"], r["critical_from"], r["unit"]
+    return st.active_rules()
+
+
+def render_plans(st: store.Store, flash: str = "", error: bool = False) -> str:
+    plans = st.list_plans()
+    hosts = st.list_hosts()
+    host_options = "".join(
+        f"<option value='{h['id']}'>{_esc(h['name'])}（{_esc(h['hostname'])}）</option>"
+        for h in hosts
+    ) or "<option value=''>请先新增主机</option>"
+
+    rows = []
+    for p in plans:
+        toggle_label = "停用" if p["enabled"] else "启用"
+        toggle_value = "0" if p["enabled"] else "1"
+        rows.append(
+            "<tr><td class='num'>{id}</td><td>{name}</td>"
+            "<td>{host}<div class='mono' style='color:#98A2B3'>{hostname}</div></td>"
+            "<td>{cycle}</td><td class='mono'>{at}</td>"
+            "<td class='mono'>{last}</td><td class='mono'>{next}</td>"
+            "<td><span class='pill {cls}'>{state}</span></td>"
+            "<td style='white-space:nowrap'>"
+            "<form method='post' action='/plans/run' style='display:inline'>"
+            "<input type='hidden' name='plan_id' value='{id}'><button type='submit'>立即执行</button></form> "
+            "<form method='post' action='/plans/toggle' style='display:inline'>"
+            "<input type='hidden' name='plan_id' value='{id}'>"
+            "<input type='hidden' name='enabled' value='{tv}'><button type='submit'>{tl}</button></form>"
+            "</td></tr>".format(
+                id=p["id"],
+                name=_esc(p["name"]),
+                host=_esc(p.get("host_name") or "—"),
+                hostname=_esc(p.get("host_hostname") or ""),
+                cycle=core.CYCLE_TEXT.get(p["cycle"], p["cycle"]),
+                at=_esc(p["at_time"]),
+                last=_esc(p["last_run_at"] or "—"),
+                next=_esc(p["next_run_at"]),
+                cls="p-on" if p["enabled"] else "p-off",
+                state="启用" if p["enabled"] else "停用",
+                tv=toggle_value,
+                tl=toggle_label,
+            )
         )
-        for r in st.list_rules(enabled_only=True)
-    ]
+
+    page = _template("plans.html")
+    flash_html = (
+        f'<div class="flash{" err" if error else ""}">{_esc(flash)}</div>' if flash else ""
+    )
+    return (
+        page.replace("{{FLASH}}", flash_html)
+        .replace("{{PLAN_COUNT}}", str(len(plans)))
+        .replace("{{HOST_OPTIONS}}", host_options)
+        .replace(
+            "{{PLAN_ROWS}}",
+            "".join(rows) or "<tr><td colspan='9' class='empty'>还没有巡检计划。</td></tr>",
+        )
+    )
+
+
+def execute_plan_now(st: store.Store, plan: dict) -> int:
+    """立即执行一次计划（与定时触发共用执行路径）。"""
+    host = st.get_host(plan["host_id"])
+    if not host:
+        raise ValueError("计划关联的主机不存在")
+    rules = st.active_rules() or list(core.BUILTIN_RULES)
+    now = core.datetime.now()
+    run = core.execute_run(host["id"], host["name"], rules=rules)
+    run_id = st.save_run(run, source="PLAN", plan_id=plan["id"])
+    st.mark_plan_run(plan["id"], now, core.next_run_time(plan["cycle"], plan["at_time"], now))
+    return run_id
 
 
 def render_rules(st: store.Store, flash: str = "", error: bool = False) -> str:
@@ -103,20 +167,22 @@ def render_index(st: store.Store, flash: str = "") -> str:
     for r in runs:
         pass_text = "—" if r["pass_rate"] is None else "{:.1f}%".format(r["pass_rate"])
         run_rows_list.append(
-            "<tr><td class='num'>{}</td><td>{}</td><td class='mono'>{}</td>"
+            "<tr><td class='num'>{}</td><td>{}</td><td>{}</td><td class='mono'>{}</td>"
             "<td class='num'>{:.1f}s</td><td class='num'>{}</td>"
             "<td class='num' style='color:#0B8A52'>{}</td>"
             "<td class='num' style='color:#B25E00'>{}</td>"
             "<td class='num' style='color:#B42318'>{}</td>"
             "<td class='num' style='color:#667085'>{}</td>"
             "<td class='num'>{}</td><td><a href='/runs/{}'>详情</a></td></tr>".format(
-                r["id"], _esc(r["host_name"]), _esc(r["started_at"]), r["duration_ms"] / 1000,
+                r["id"], _esc(r["host_name"]),
+                "定时" if r.get("source") == "PLAN" else "手动",
+                _esc(r["started_at"]), r["duration_ms"] / 1000,
                 r["total"], r["normal"], r["warning"], r["critical"], r["unknown"],
                 pass_text, r["id"],
             )
         )
     run_rows = "".join(run_rows_list) or (
-        "<tr><td colspan='11' class='empty'>还没有执行记录。</td></tr>"
+        "<tr><td colspan='12' class='empty'>还没有执行记录。</td></tr>"
     )
 
     page = _template("index.html")
@@ -158,6 +224,7 @@ def render_run_detail(run: dict) -> str:
         .replace("{{WARNING}}", str(run["warning"]))
         .replace("{{CRITICAL}}", str(run["critical"]))
         .replace("{{UNKNOWN}}", str(run["unknown"]))
+        .replace("{{SOURCE}}", "定时计划" if run.get("source") == "PLAN" else "手动")
         .replace("{{PASS_RATE}}", pass_rate)
         .replace("{{ITEM_ROWS}}", "".join(item_rows))
     )
@@ -199,6 +266,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/":
             self._send(200, render_index(self.store))
             return
+        if path == "/plans":
+            self._send(200, render_plans(self.store))
+            return
         if path == "/rules":
             self._send(200, render_rules(self.store))
             return
@@ -238,6 +308,54 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
+
+        if path == "/plans":
+            form = self._read_form()
+            try:
+                self.store.add_plan(
+                    form.get("name", ""),
+                    form.get("host_id", ""),
+                    form.get("cycle", ""),
+                    form.get("at_time", ""),
+                )
+            except ValueError as exc:
+                self._send(400, render_plans(self.store, flash=str(exc), error=True))
+                return
+            self._redirect("/plans")
+            return
+
+        if path == "/plans/toggle":
+            form = self._read_form()
+            plan_id = form.get("plan_id", "")
+            if not plan_id.isdigit():
+                self._send(400, render_plans(self.store, flash="无效的计划编号", error=True))
+                return
+            try:
+                self.store.set_plan_enabled(int(plan_id), form.get("enabled") == "1")
+            except ValueError as exc:
+                self._send(400, render_plans(self.store, flash=str(exc), error=True))
+                return
+            self._redirect("/plans")
+            return
+
+        if path == "/plans/run":
+            form = self._read_form()
+            plan_id = form.get("plan_id", "")
+            plan = self.store.get_plan(int(plan_id)) if plan_id.isdigit() else None
+            if not plan:
+                self._send(404, "<h1>404</h1><p>计划不存在。</p>")
+                return
+            rules = rules_from_store(self.store)
+            if not rules:
+                self._send(400, render_plans(self.store, flash="没有启用的规则，请先在规则配置页启用", error=True))
+                return
+            try:
+                run_id = execute_plan_now(self.store, plan)
+            except ValueError as exc:
+                self._send(400, render_plans(self.store, flash=str(exc), error=True))
+                return
+            self._redirect(f"/runs/{run_id}")
+            return
 
         if path == "/rules":
             form = self._read_form()
@@ -303,10 +421,16 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--db", default=os.path.join(BASE_DIR, "inspection.db"))
+    parser.add_argument("--no-scheduler", action="store_true", help="不启动后台定时调度")
     args = parser.parse_args()
 
     httpd, st = create_server(args.db, args.host, args.port)
-    print(f"主机巡检已启动: http://{args.host}:{args.port}  (db={args.db}, hosts={st.count_hosts()})")
+    if not args.no_scheduler:
+        scheduler.start_scheduler(st)
+    print(
+        f"主机巡检已启动: http://{args.host}:{args.port}  "
+        f"(db={args.db}, hosts={st.count_hosts()}, scheduler={'off' if args.no_scheduler else 'on'})"
+    )
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

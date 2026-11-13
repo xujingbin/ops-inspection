@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Callable, Dict, Iterable, List, Optional
 
 NORMAL = "NORMAL"
@@ -119,6 +120,40 @@ class RunResult:
     def pass_rate_text(self) -> str:
         rate = self.pass_rate
         return "—" if rate is None else f"{rate:.1f}%"
+
+
+CYCLE_DAILY = "DAILY"
+CYCLE_WEEKLY = "WEEKLY"
+CYCLE_TEXT = {CYCLE_DAILY: "每日", CYCLE_WEEKLY: "每周一"}
+
+
+def parse_hhmm(at_time: str) -> tuple:
+    try:
+        hour_s, minute_s = str(at_time).strip().split(":")
+        hour, minute = int(hour_s), int(minute_s)
+    except (AttributeError, ValueError):
+        raise ValueError("执行时间格式应为 HH:MM")
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError("执行时间格式应为 HH:MM（00:00 ~ 23:59）")
+    return hour, minute
+
+
+def next_run_time(cycle: str, at_time: str, now: Optional[datetime] = None) -> datetime:
+    """计算下一次执行时间：DAILY 每日；WEEKLY 每周一。"""
+    if cycle not in CYCLE_TEXT:
+        raise ValueError(f"不支持的周期: {cycle}")
+    hour, minute = parse_hhmm(at_time)
+    now = now or datetime.now()
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if cycle == CYCLE_DAILY:
+        if candidate <= now:
+            candidate += timedelta(days=1)
+        return candidate
+    days_ahead = (0 - now.weekday()) % 7  # 0 = 周一
+    candidate += timedelta(days=days_ahead)
+    if candidate <= now:
+        candidate += timedelta(days=7)
+    return candidate
 
 
 # --------------------------------------------------------------------------

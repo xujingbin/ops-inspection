@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>巡检计划 · 定时执行</title>
+<style>
+:root{--blue:#2E5BFF;--green:#12B76A;--amber:#F79009;--red:#F04438;--grey:#98A2B3;
+  --ink:#101828;--ink2:#475467;--line:#EAECF0;--bg:#F5F7FB}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-size:13px;
+  font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","DejaVu Sans",sans-serif}
+.wrap{max-width:1040px;margin:0 auto;padding:24px 20px 48px}
+h1{font-size:19px;margin:0 0 4px}
+.sub{color:#667085;font-size:12.5px;margin-bottom:18px}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;margin-bottom:16px}
+.card h2{font-size:13.5px;margin:0;padding:13px 16px;border-bottom:1px solid var(--line);font-weight:650}
+.card h2 .n{color:#98A2B3;font-weight:400;margin-left:6px}
+.body{padding:14px 16px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:#667085;font-weight:600;font-size:11.5px;padding:8px 10px;
+  background:#FAFBFC;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:9px 10px;border-bottom:1px solid #F4F5F8;color:var(--ink2);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+.num{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink)}
+.mono{font-family:"DejaVu Sans Mono",monospace;font-size:11.5px}
+form.inline{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+label{display:block;font-size:11.5px;color:#667085;margin-bottom:4px}
+input,select{font-family:inherit;font-size:12px;padding:7px 9px;border:1px solid var(--line);
+  border-radius:7px;background:#fff;min-width:120px}
+button{font-family:inherit;font-size:11.5px;padding:6px 12px;border-radius:6px;border:1px solid var(--line);
+  background:#fff;color:var(--ink2);cursor:pointer}
+button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+button.primary:hover{background:#2249D6}
+button:hover{border-color:#C7D2E8;color:var(--ink)}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+.pill{display:inline-block;padding:1.5px 8px;border-radius:20px;font-size:11px;font-weight:600}
+.p-on{color:#0B8A52;background:#E7F8F0}
+.p-off{color:#667085;background:#F2F4F7}
+.empty{color:#98A2B3;font-size:12px;padding:8px 0}
+.note{background:#FBFCFE;border:1px dashed #DDE3EE;border-radius:9px;padding:10px 12px;
+  color:#475467;font-size:11.5px;line-height:1.7;margin-top:12px}
+.flash{background:#FEF4E6;border:1px solid #FDE68A;color:#7A4D00;border-radius:9px;
+  padding:9px 12px;font-size:12px;margin-bottom:14px}
+.flash.err{background:#FEF3F2;border-color:#FECDCA;color:#B42318}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>巡检计划 · 定时执行</h1>
+  <div class="sub">每日 / 每周一 固定时间自动执行；与手动执行共用同一套规则与结果模型 · <a href="/">巡检首页</a> · <a href="/rules">规则阈值配置</a></div>
+  {{FLASH}}
+
+  <div class="card">
+    <h2>新建计划</h2>
+    <div class="body">
+      <form class="inline" method="post" action="/plans">
+        <div><label>计划名称</label><input name="name" placeholder="每日主机巡检" required></div>
+        <div><label>巡检主机</label><select name="host_id">{{HOST_OPTIONS}}</select></div>
+        <div><label>周期</label>
+          <select name="cycle"><option value="DAILY">每日</option><option value="WEEKLY">每周一</option></select>
+        </div>
+        <div><label>执行时间</label><input name="at_time" value="08:00" placeholder="08:00" pattern="[0-2][0-9]:[0-5][0-9]" required></div>
+        <button class="primary" type="submit">创建</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>计划列表<span class="n">{{PLAN_COUNT}} 个</span></h2>
+    <div class="body" style="padding:4px 8px">
+      <table>
+        <thead><tr><th>#</th><th>计划</th><th>主机</th><th>周期</th><th>执行时间</th>
+          <th>上次执行</th><th>下次执行</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody>{{PLAN_ROWS}}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="note">
+    调度由应用进程内的后台线程完成（默认每 15 秒扫一次到期计划），不依赖外部调度组件。进程停机期间错过的计划不会补跑，
+    恢复后按「下次执行」继续；单个计划执行失败只影响该次执行，不影响其它计划。<br>
+    自动执行产生的记录在结果页标记来源为「定时」。
+  </div>
+</div>
+</body>
+</html>
