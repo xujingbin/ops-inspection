@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -35,6 +36,39 @@ class ThresholdTest(unittest.TestCase):
         self.assertEqual(
             [r.metric for r in core.BUILTIN_RULES], ["cpu", "memory", "disk"]
         )
+
+
+class ScheduleTimeTest(unittest.TestCase):
+    def test_daily_today_when_time_not_reached(self):
+        now = datetime(2026, 11, 13, 7, 30)  # 周五
+        self.assertEqual(core.next_run_time("DAILY", "08:00", now), datetime(2026, 11, 13, 8, 0))
+
+    def test_daily_rolls_to_tomorrow(self):
+        now = datetime(2026, 11, 13, 9, 0)
+        self.assertEqual(core.next_run_time("DAILY", "08:00", now), datetime(2026, 11, 14, 8, 0))
+
+    def test_daily_exact_time_rolls_forward(self):
+        now = datetime(2026, 11, 13, 8, 0)
+        self.assertEqual(core.next_run_time("DAILY", "08:00", now), datetime(2026, 11, 14, 8, 0))
+
+    def test_weekly_goes_to_next_monday(self):
+        now = datetime(2026, 11, 13, 14, 0)  # 周五
+        self.assertEqual(core.next_run_time("WEEKLY", "09:00", now), datetime(2026, 11, 16, 9, 0))
+
+    def test_weekly_on_monday_before_time_uses_today(self):
+        now = datetime(2026, 11, 16, 8, 0)  # 周一
+        self.assertEqual(core.next_run_time("WEEKLY", "09:00", now), datetime(2026, 11, 16, 9, 0))
+
+    def test_weekly_on_monday_after_time_uses_next_week(self):
+        now = datetime(2026, 11, 16, 10, 0)
+        self.assertEqual(core.next_run_time("WEEKLY", "09:00", now), datetime(2026, 11, 23, 9, 0))
+
+    def test_invalid_cycle_and_time(self):
+        with self.assertRaises(ValueError):
+            core.next_run_time("MONTHLY", "08:00")
+        for bad in ("8", "25:00", "08:70", "abc"):
+            with self.assertRaises(ValueError):
+                core.parse_hhmm(bad)
 
 
 class ExecuteRunTest(unittest.TestCase):
