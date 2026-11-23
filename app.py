@@ -291,6 +291,17 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, "<h1>404</h1><p>页面不存在。</p>")
 
 
+def _env_port() -> int | None:
+    """读取环境变量 PORT；未设置或非法时返回 None。"""
+    raw = os.environ.get("PORT", "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
 def create_server(db_path: str = "inspection.db", host: str = "0.0.0.0", port: int = 8000):
     st = store.Store(db_path)
     handler = type("BoundHandler", (Handler,), {"store": st})
@@ -299,14 +310,33 @@ def create_server(db_path: str = "inspection.db", host: str = "0.0.0.0", port: i
 
 
 def main() -> None:
+    env_port = _env_port()
     parser = argparse.ArgumentParser(description="MVP-01 主机巡检最小闭环")
     parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=env_port or 8000,
+        help="监听端口，默认取环境变量 PORT，未设置时为 8000",
+    )
     parser.add_argument("--db", default=os.path.join(BASE_DIR, "inspection.db"))
     args = parser.parse_args()
 
-    httpd, st = create_server(args.db, args.host, args.port)
+    try:
+        httpd, st = create_server(args.db, args.host, args.port)
+    except OSError as exc:
+        reason = exc.strerror or str(exc)
+        raise SystemExit(
+            f"启动失败: 无法监听 {args.host}:{args.port}（{reason}）。"
+            f"换一个端口: python3 app.py --port {args.port + 1}"
+        ) from exc
+
     print(f"主机巡检已启动: http://{args.host}:{args.port}  (db={args.db}, hosts={st.count_hosts()})")
+    if env_port and args.port != env_port:
+        print(
+            f"提示: 环境变量 PORT={env_port}，平台预览一般只转发该端口；"
+            f"如需预览请用 --port {env_port} 或不传 --port"
+        )
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

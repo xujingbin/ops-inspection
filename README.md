@@ -6,10 +6,37 @@
 
 ## 启动
 
+环境要求：Python 3.11+，零第三方依赖（不需要 pip install）。
+
+推荐用脚本启动，脚本会先检查 Python 版本和端口占用：
+
 ```bash
-python3 app.py --port 8000
-# 打开 http://localhost:8000
+./start.sh                  # 前台运行，Ctrl+C 退出
+./start.sh --port 8001      # 换端口
+./start.sh --db /tmp/x.db   # 指定数据库
+./start.sh --daemon         # 后台运行：日志 server.log，PID server.pid
 ```
+
+也可以直接运行：
+
+```bash
+python3 app.py              # 默认端口：优先取环境变量 PORT，未设置时 8000
+python3 app.py --port 8000  # 显式指定端口，优先级高于 PORT
+```
+
+启动后打开 http://localhost:8000 （端口按上一条规则确认），用健康检查验证：
+
+```bash
+curl http://localhost:8000/health
+# {"status": "ok", "hosts": 0}
+```
+
+端口约定与常见问题：
+
+- 默认监听 `0.0.0.0:8000`；如果运行环境设置了 `PORT`（云工作区、容器平台常见），不传 `--port` 时使用 `PORT`，因为平台通常只转发这个端口。显式传 `--port` 以参数为准。
+- 端口被占用时程序会直接提示换端口，不再抛 traceback。
+- 页面打不开时先看启动日志里的「主机巡检已启动」端口，再用上面的 `curl` 验证；后台模式日志在 `server.log`。
+- 停止后台服务：`kill $(cat server.pid)`。
 
 数据库默认落在 `inspection.db`，可用 `--db /path/to.db` 指定。
 
