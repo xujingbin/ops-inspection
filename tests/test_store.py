@@ -80,6 +80,60 @@ class RuleStoreTest(unittest.TestCase):
         self.assertEqual(len(again.list_rules()), 3)
 
 
+class PlanStoreTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.st = store.Store(os.path.join(self.tmp.name, "test.db"))
+        self.host_id = self.st.add_host("h1", "10.0.0.1", "生产", "交易中心")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_add_plan(self):
+        plan_id = self.st.add_plan("每日主机巡检", self.host_id, core.CYCLE_DAILY, "08:00")
+        plan = self.st.get_plan(plan_id)
+        self.assertEqual(plan["name"], "每日主机巡检")
+        self.assertTrue(plan["enabled"])
+        self.assertIsNone(plan["last_run_at"])
+        listed = self.st.list_plans()
+        self.assertEqual(listed[0]["host_name"], "h1")
+
+    def test_add_plan_validation(self):
+        with self.assertRaises(ValueError):
+            self.st.add_plan("", self.host_id, core.CYCLE_DAILY, "08:00")
+        with self.assertRaises(ValueError):
+            self.st.add_plan("p", 9999, core.CYCLE_DAILY, "08:00")
+        with self.assertRaises(ValueError):
+            self.st.add_plan("p", self.host_id, "HOURLY", "08:00")
+        with self.assertRaises(ValueError):
+            self.st.add_plan("p", self.host_id, core.CYCLE_DAILY, "8点")
+
+    def test_due_plans_only_returns_due_and_enabled(self):
+        plan_id = self.st.add_plan("p", self.host_id, core.CYCLE_DAILY, "08:00")
+        self.assertEqual(self.st.due_plans(), [])  # 刚建的计划在将来
+        with self.st._connect() as conn:
+            conn.execute(
+                "UPDATE plans SET next_run_at = ? WHERE id = ?", ("2020-01-01 00:00:00", plan_id)
+            )
+        self.assertEqual([p["id"] for p in self.st.due_plans()], [plan_id])
+        self.st.set_plan_enabled(plan_id, False)
+        self.assertEqual(self.st.due_plans(), [])
+
+    def test_toggle_plan_recomputes_next_run(self):
+        plan_id = self.st.add_plan("p", self.host_id, core.CYCLE_DAILY, "08:00")
+        self.st.set_plan_enabled(plan_id, False)
+        with self.st._connect() as conn:
+            conn.execute("UPDATE plans SET next_run_at = ? WHERE id = ?", ("2020-01-01 00:00:00", plan_id))
+        again = self.st.set_plan_enabled(plan_id, True)
+        self.assertTrue(again["enabled"])
+        self.assertGreater(again["next_run_at"], "2020-01-01 00:00:00")
+
+    def test_unknown_plan(self):
+        with self.assertRaises(ValueError):
+            self.st.set_plan_enabled(9999, True)
+        self.assertIsNone(self.st.get_plan(9999))
+
+
 class RunStoreTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

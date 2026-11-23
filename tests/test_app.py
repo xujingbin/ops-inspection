@@ -157,6 +157,63 @@ class HttpTest(unittest.TestCase):
             for r in rules:
                 self.store.update_rule(r["code"], r["normal_below"], r["critical_from"], enabled=True)
 
+    def test_plans_page(self):
+        status, body, _ = self.get("/plans")
+        self.assertEqual(status, 200)
+        self.assertIn("巡检计划 · 定时执行", body)
+        self.assertIn("新建计划", body)
+
+    def test_create_plan_from_page(self):
+        host_id = self.add_host("linux-test-plan-01")
+        status, _, headers = self.post(
+            "/plans",
+            {"name": "每日巡检-plan", "host_id": str(host_id), "cycle": "DAILY", "at_time": "08:00"},
+        )
+        self.assertEqual(status, 303)
+        self.assertEqual(headers.get("Location"), "/plans")
+        status, body, _ = self.get("/plans")
+        self.assertIn("每日巡检-plan", body)
+
+    def test_create_plan_invalid(self):
+        status, body, _ = self.post(
+            "/plans", {"name": "", "host_id": "", "cycle": "DAILY", "at_time": "08:00"}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("计划名称必填", body)
+
+    def test_plan_run_now_marks_source(self):
+        host_id = self.add_host("linux-test-plan-run-01")
+        self.post(
+            "/plans",
+            {"name": "手动触发计划", "host_id": str(host_id), "cycle": "DAILY", "at_time": "08:00"},
+        )
+        plan_id = self.store.list_plans()[0]["id"]
+        status, _, headers = self.post("/plans/run", {"plan_id": str(plan_id)})
+        self.assertEqual(status, 303)
+        location = headers.get("Location")
+        self.assertTrue(location.startswith("/runs/"))
+        status, body, _ = self.get(location)
+        self.assertEqual(status, 200)
+        self.assertIn("定时计划", body)
+        self.assertIn("逐项结果", body)
+
+    def test_plan_toggle(self):
+        host_id = self.add_host("linux-test-plan-toggle-01")
+        self.post(
+            "/plans",
+            {"name": "切换计划", "host_id": str(host_id), "cycle": "WEEKLY", "at_time": "09:00"},
+        )
+        plan_id = self.store.list_plans()[0]["id"]
+        status, _, _ = self.post("/plans/toggle", {"plan_id": str(plan_id), "enabled": "0"})
+        self.assertEqual(status, 303)
+        self.assertFalse(self.store.get_plan(plan_id)["enabled"])
+        self.post("/plans/toggle", {"plan_id": str(plan_id), "enabled": "1"})
+        self.assertTrue(self.store.get_plan(plan_id)["enabled"])
+
+    def test_plan_run_unknown(self):
+        status, _, _ = self.post("/plans/run", {"plan_id": "999999"})
+        self.assertEqual(status, 404)
+
     def test_missing_run_detail(self):
         status, body, _ = self.get("/runs/999999")
         self.assertEqual(status, 404)

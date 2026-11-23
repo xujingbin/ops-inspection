@@ -1,4 +1,4 @@
-"""SQLite 存储：主机对象、规则阈值、执行记录、逐项结果。"""
+"""SQLite 存储：主机对象、规则阈值、巡检计划、执行记录、逐项结果。"""
 
 from __future__ import annotations
 
@@ -27,6 +27,18 @@ CREATE TABLE IF NOT EXISTS rules (
     unit          TEXT NOT NULL DEFAULT '%',
     enabled       INTEGER NOT NULL DEFAULT 1,
     updated_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS plans (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    host_id     INTEGER NOT NULL REFERENCES hosts(id),
+    cycle       TEXT NOT NULL,
+    at_time     TEXT NOT NULL,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    last_run_at TEXT,
+    next_run_at TEXT NOT NULL,
+    created_at  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS runs (
@@ -85,6 +97,11 @@ class Store:
     def _init_db(self) -> None:
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
+            if "source" not in columns:
+                conn.execute("ALTER TABLE runs ADD COLUMN source TEXT NOT NULL DEFAULT 'MANUAL'")
+            if "plan_id" not in columns:
+                conn.execute("ALTER TABLE runs ADD COLUMN plan_id INTEGER")
             conn.executemany(
                 """INSERT OR IGNORE INTO rules
                    (code, name, metric, normal_below, critical_from, unit, enabled, updated_at)
@@ -166,15 +183,105 @@ class Store:
             )
         return self.get_rule(code)
 
+    def active_rules(self) -> List["core.Rule"]:
+        """把启用规则转换成巡检核心的 Rule 对象。"""
+        return [
+            core.Rule(
+                r["code"], r["name"], r["metric"], r["normal_below"], r["critical_from"], r["unit"]
+            )
+            for r in self.list_rules(enabled_only=True)
+        ]
+
+    # ---------------- 巡检计划 ----------------
+
+    def add_plan(self, name: str, host_id, cycle: str, at_time: str) -> int:
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("计划名称必填")
+        host = None
+        if str(host_id).isdigit():
+            host = self.get_host(int(host_id))
+        if not host:
+            raise ValueError("请选择有效的巡检主机")
+        if cycle not in core.CYCLE_TEXT:
+            raise ValueError("周期只支持每日或每周一")
+        next_at = core.next_run_time(cycle, at_time)
+        with self._connect() as conn:
+            cur = conn.execute(
+                """INSERT INTO plans (name, host_id, cycle, at_time, enabled, next_run_at, created_at)
+                   VALUES (?, ?, ?, ?, 1, ?, ?)""",
+                (name, host["id"], cycle, at_time, _fmt(next_at.timestamp()), _now()),
+            )
+            return int(cur.lastrowid)
+
+    def list_plans(self) -> List[Dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT p.*, h.name AS host_name, h.hostname AS host_hostname
+                   FROM plans p LEFT JOIN hosts h ON h.id = p.host_id
+                   ORDER BY p.id DESC"""
+            ).fetchall()
+        plans = []
+        for row in rows:
+            item = dict(row)
+            item["enabled"] = bool(item["enabled"])
+            plans.append(item)
+        return plans
+
+    def get_plan(self, plan_id: int) -> Optional[Dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM plans WHERE id = ?", (plan_id,)).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["enabled"] = bool(item["enabled"])
+        return item
+
+    def set_plan_enabled(self, plan_id: int, enabled: bool) -> Dict:
+        plan = self.get_plan(plan_id)
+        if not plan:
+            raise ValueError("计划不存在")
+        next_run_at = plan["next_run_at"]
+        if enabled:
+            next_run_at = _fmt(core.next_run_time(plan["cycle"], plan["at_time"]).timestamp())
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE plans SET enabled = ?, next_run_at = ? WHERE id = ?",
+                (1 if enabled else 0, next_run_at, plan_id),
+            )
+        return self.get_plan(plan_id)
+
+    def due_plans(self, now=None) -> List[Dict]:
+        moment = now or datetime.now()
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM plans WHERE enabled = 1 AND next_run_at <= ? ORDER BY id",
+                (_fmt(moment.timestamp()),),
+            ).fetchall()
+        plans = []
+        for row in rows:
+            item = dict(row)
+            item["enabled"] = bool(item["enabled"])
+            plans.append(item)
+        return plans
+
+    def mark_plan_run(self, plan_id: int, ran_at, next_at) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE plans SET last_run_at = ?, next_run_at = ? WHERE id = ?",
+                (_fmt(ran_at.timestamp()), _fmt(next_at.timestamp()), plan_id),
+            )
+
     # ---------------- 执行记录 ----------------
 
-    def save_run(self, run: core.RunResult) -> int:
+    def save_run(self, run: core.RunResult, source: str = "MANUAL", plan_id: Optional[int] = None) -> int:
         counts = run.counts
         with self._connect() as conn:
             cur = conn.execute(
                 """INSERT INTO runs (host_id, host_name, status, started_at, finished_at,
-                                     duration_ms, total, normal, warning, critical, unknown, pass_rate)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                     duration_ms, total, normal, warning, critical, unknown, pass_rate,
+                                     source, plan_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run.host_id,
                     run.host_name,
@@ -188,6 +295,8 @@ class Store:
                     counts[core.CRITICAL],
                     counts[core.UNKNOWN],
                     run.pass_rate,
+                    source,
+                    plan_id,
                 ),
             )
             run_id = int(cur.lastrowid)
