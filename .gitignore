@@ -3,3 +3,6 @@ __pycache__/
 *.db
 *.db-journal
 .venv/
+server.log
+server.pid
+.env
