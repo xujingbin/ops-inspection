@@ -34,11 +34,31 @@ curl http://localhost:8000/health
 端口约定与常见问题：
 
 - 默认监听 `0.0.0.0:8000`；如果运行环境设置了 `PORT`（云工作区、容器平台常见），不传 `--port` 时使用 `PORT`，因为平台通常只转发这个端口。显式传 `--port` 以参数为准。
+- 配置优先级：命令行参数 > 环境变量 > `.env` > 默认值；`.env` 里的 `HOST` / `PORT` / `DB` 同样生效（同名环境变量已存在时以环境变量为准）。
 - 端口被占用时程序会直接提示换端口，不再抛 traceback。
 - 页面打不开时先看启动日志里的「主机巡检已启动」端口，再用上面的 `curl` 验证；后台模式日志在 `server.log`。
 - 停止后台服务：`kill $(cat server.pid)`。
 
 数据库默认落在 `inspection.db`，可用 `--db /path/to.db` 指定。
+
+### 鉴权与数据源配置
+
+部分版本开启了启动鉴权：缺少 `OPS_AUTH_PASSWORD`（HTTP Basic）或 `OPS_AUTH_TOKEN`（Bearer）时会直接拒绝启动，提示：
+
+```
+error: 必须配置 OPS_AUTH_PASSWORD（HTTP Basic）或 OPS_AUTH_TOKEN（Bearer），服务拒绝在未鉴权状态下启动
+```
+
+用环境变量或 `.env` 提供（`start.sh` 默认加载仓库下的 `.env`，也支持 `--env-file PATH`）：
+
+```bash
+cp .env.example .env    # 编辑 .env 填入真实值，.env 已被 git 忽略
+./start.sh              # 或临时: OPS_AUTH_PASSWORD=xxx ./start.sh
+```
+
+- 不要把密码写成命令行参数（`ps` 可见），也不要提交进仓库。
+- `warning: OPS_DATASOURCE_KEY is not set` 只影响「保存数据源密码」，不影响服务启动；需要该能力时在 `.env` 里补上。
+- 鉴权开启后，浏览器访问会要求输入账号密码，`curl` 需带 `-u user:pass` 或 `-H "Authorization: Bearer <token>"`。
 
 ## 功能范围
 
